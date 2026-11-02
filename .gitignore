@@ -11,3 +11,8 @@ __pycache__/
 .ipynb_checkpoints/
 .venv/
 .env
+
+# Airflow (local runtime files)
+logs/
+# airflow.cfg is auto-generated and contains secret keys
+config/airflow.cfg

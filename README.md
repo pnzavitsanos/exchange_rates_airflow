@@ -59,7 +59,7 @@ This project implements an end-to-end **batch** data pipeline for historical and
 |:----:|------------------|---------------|
 | 🇪🇺 EUR | 🇺🇸 USD · 🇬🇧 GBP · 🇨🇭 CHF · 🇨🇳 CNY | EUR/USD · EUR/GBP · EUR/CHF · EUR/CNY |
 
-> **Background.** The project started as a simple Python ETL exercise that loaded Frankfurter data into a local PostgreSQL database. It was then redesigned as a Microsoft Fabric pipeline, partly as a practical companion to **Microsoft Azure Data Fundamentals (DP-900)** study. The Fabric implementation is the canonical version of the project.
+> **Background.** The project started as a simple Python ETL exercise that loaded Frankfurter data into a local PostgreSQL database. It was then redesigned as a Microsoft Fabric pipeline, partly as a practical companion to **Microsoft Azure Data Fundamentals (DP-900)** study. The Fabric implementation is the canonical version of the project. The daily ETL also has an [Apache Airflow version](#airflow-version) that runs locally in Docker.
 
 ### 🐘 Where it started: the PostgreSQL prototype
 
@@ -83,6 +83,40 @@ The original pipeline was a single Python script that ran locally. It already ha
 | Reporting | SQL queries | Semantic model + Power BI report |
 
 > The prototype is kept for reference only. It needs a local PostgreSQL database and reads the password from the `PGPASSWORD` environment variable.
+
+<a id="airflow-version"></a>
+
+### 🌀 Apache Airflow version
+
+📄 [`dags/exchange_rates_daily.py`](dags/exchange_rates_daily.py)
+
+The daily ETL notebook is also rebuilt as an **Apache Airflow 3** DAG. It runs locally in Docker and loads into PostgreSQL. It's the same logic as the notebook, but each stage is a separate Airflow task:
+
+```
+create_table ─┐
+extract ──> transform_and_validate ──> load ──> verify
+```
+
+| Task | What it does |
+|---|---|
+| `create_table` | Creates the `exchange_rates` table if it doesn't exist (primary key `date, base, quote`) |
+| `extract` | Calls the Frankfurter v2 API for EUR → USD, GBP, CHF, CNY. Retries 3 times, 1 minute apart |
+| `transform_and_validate` | Pandas table, then the same checks as the notebook: no empty result, no missing values, no non-positive rates, no duplicate keys |
+| `load` | Upserts with `INSERT … ON CONFLICT DO UPDATE`, so re-runs don't create duplicates |
+| `verify` | Reads back the rows for the dates just loaded and fails if none are found |
+
+- **Schedule:** every day at 12:00 Europe/Athens, with `catchup=False`.
+- **Data between tasks:** passed as XComs, so dates are converted to text before leaving `transform_and_validate`.
+- **Credentials:** the DAG only refers to the Airflow connection `exchange_rates_pg`. The password is stored in Airflow, never in the code.
+
+**Running it locally**
+
+1. Create a `.env` file next to `docker-compose.yaml` with `AIRFLOW_UID=50000` and a `FERNET_KEY` (git ignores this file).
+2. `docker compose up -d`, then open http://localhost:8080 (default login `airflow` / `airflow`).
+3. In **Admin → Connections**, add a Postgres connection named `exchange_rates_pg` that points to your database.
+4. Turn on the `exchange_rates_daily` DAG, or trigger it by hand.
+
+> `docker-compose.yaml` is the official Airflow quick-start file. It's meant for local learning, not production.
 
 ---
 
@@ -537,6 +571,10 @@ You can use it to answer questions such as *"What was the highest EUR/USD rate i
 exchange-rates-fabric-pipeline/
 │
 ├── README.md
+├── docker-compose.yaml                     # Local Airflow setup (official quick-start)
+│
+├── dags/
+│   └── exchange_rates_daily.py             # Airflow DAG: daily ETL → PostgreSQL
 │
 ├── notebooks/
 │   ├── initial_historical_backfill.ipynb   # One-time historical load (overwrite)
